@@ -1,0 +1,114 @@
+
+version: '3.8'
+
+services:
+  # MCP Server
+  mcp-server:
+    build:
+      context: ./mcp-server
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./data/mcp_storage:/app/mcp_storage
+      - ./data/mcp_server.db:/app/mcp_server.db
+    environment:
+      - STORAGE_DIR=/app/mcp_storage
+      - DB_PATH=/app/mcp_server.db
+      - MAX_FILE_SIZE=104857600  # 100MB
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # RabbitHole Plugin
+  rabbithole-plugin:
+    build:
+      context: ./rabbithole-plugin
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - JWT_SECRET=your-super-secret-jwt-key
+      - CCAT_API_KEY=your-ccat-api-key
+      - CCAT_BASE_URL=http://ccat-core:1865
+      - MCP_TIMEOUT=30
+    depends_on:
+      - mcp-server
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # WebUI Backend
+  webui-backend:
+    build:
+      context: ./webui-backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/uploads:/app/uploads
+    environment:
+      - JWT_SECRET=your-super-secret-jwt-key
+      - MCP_SERVER_URL=http://mcp-server:8002
+      - RABBITHOLE_URL=http://rabbithole-plugin:8001
+      - UPLOAD_DIR=/app/uploads
+    depends_on:
+      - mcp-server
+      - rabbithole-plugin
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # WebUI Frontend
+  webui-frontend:
+    build:
+      context: ./webui-client
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    depends_on:
+      - webui-backend
+
+  # CCAT Core (esempio)
+  ccat-core:
+    image: ghcr.io/cheshire-cat-ai/core:latest
+    ports:
+      - "1865:80"
+    volumes:
+      - ./data/ccat:/app/cat/data
+    environment:
+      - CCAT_LOG_LEVEL=INFO
+
+  # Prometheus per monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+
+  # Grafana per dashboard
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./monitoring/grafana:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+
+volumes:
+  mcp_data:
+  ccat_data:
+  grafana_data:
